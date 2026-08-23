@@ -3003,10 +3003,42 @@ def test_browser_zip_watch_and_install_from_zip():
     assert _is_partial_name(f"{GOFILE_FILE_NAME}.crdownload", GOFILE_FILE_NAME)
     assert not _is_partial_name(GOFILE_FILE_NAME, GOFILE_FILE_NAME)
 
-    watch = client_watch_dirs()
-    assert watch
-    joined = " ".join(str(p).lower() for p in watch)
-    assert "download" in joined or "desktop" in joined
+    # Pin discovery to a temp home. Asserting against the real account made this
+    # fail on any machine whose home has no Downloads/Desktop — a container, a
+    # fresh Linux login — even though discovery itself was working fine.
+    import os
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        (home / "Downloads").mkdir()
+        (home / "Desktop").mkdir()
+        # POSIX expands ~ through HOME, Windows through USERPROFILE.
+        saved = {key: os.environ.get(key) for key in ("HOME", "USERPROFILE")}
+        for key in saved:
+            os.environ[key] = str(home)
+        try:
+            watch = client_watch_dirs()
+        finally:
+            for key, prior in saved.items():
+                if prior is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = prior
+        assert watch
+        # Windows also resolves the shell folders from the registry, so the real
+        # account's paths may be present too -- only require ours.
+        lowered = {str(path).lower() for path in watch}
+        assert str((home / "Downloads").resolve()).lower() in lowered, watch
+        assert str((home / "Desktop").resolve()).lower() in lowered, watch
+
+    # Extra folders are watched alongside the home ones, each with its
+    # .ichalaunch subfolder when one exists.
+    with tempfile.TemporaryDirectory() as td:
+        extra = Path(td)
+        (extra / ".ichalaunch").mkdir()
+        resolved = {path.resolve() for path in client_watch_dirs(extra=[extra])}
+        assert extra.resolve() in resolved, resolved
+        assert (extra / ".ichalaunch").resolve() in resolved, resolved
 
     with tempfile.TemporaryDirectory() as td:
         folder = Path(td)
